@@ -36,9 +36,63 @@ class YouTubeLinked():
         self.storage = sys.modules["__main__"].storage
         self.core = sys.modules["__main__"].core
         self.common = sys.modules["__main__"].common
+        self.nonChannels = ['edu', 'education', 'subscription_center', 'feed', 'editor', 'watch', 'playlist']
         # Received from https://gist.github.com/uogbuji/705383
         self.GRUBER_URLINTEXT_PAT = re.compile(ur'(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'".,<>?\xab\xbb\u201c\u201d\u2018\u2019]))')
 
+    #---------------------------------Entry Points------------------------------------#
+    def getLinkedResources(self, item):
+        desc = item("Plot")
+        channels = []
+        playlists = []
+        videos = []
+        
+        if not desc or 'media:thumbnail' in desc:
+            return False
+        
+        mgroups = self.GRUBER_URLINTEXT_PAT.findall(desc)
+        urls = [mgroup[0] for mgroup in mgroups]
+        for url in urls:
+            #######################################################################################
+            #
+            # Currently only looks for resources under the domains "youtube.com" and "youtu.be"
+            # May need to be updated for international
+            #
+            ####################################################################################### 
+            if 'youtube.com/' in url.lower() or 'youtu.be/' in url.lower():
+                if self.hasPlaylist(url):
+                    playlists.append(self.findPlaylist(url))
+                elif self.hasVideo(url):
+                    videos.append(self.findVideo(url))
+                elif self.hasChannel(url):
+                    channels.append(self.findChannel(url))
+
+        url = ''
+        q = {}
+        if channels:
+            q['linked_channels'] = json.dumps(self.uniquify(channels))
+        if playlists:
+            q['linked_playlists'] = json.dumps(self.uniquify(playlists))
+        if videos:
+            q['linked_videos'] = json.dumps(self.uniquify(videos))
+        
+        return q
+    
+    def list(self, params):
+        self.common.log("params: " + repr(params), 5)
+        self.common.log("params: " + repr(params))
+        get = params.get
+        
+        if get("linked") == 'videos':
+            return self.listVideos(params)
+        
+        if get("linked") == 'channels':
+            return self.listChannels(params)
+
+        if get("linked") == 'playlists':
+            return self.listPlaylists(params)
+    
+    #------------------------------Resource Extraction---------------------------------#
     def hasChannel(self, url):
         '''Returns True if the URL is a channel.
         Assumes the URL is not a playlist or a video
@@ -57,7 +111,7 @@ class YouTubeLinked():
         else:
             user = url[start:end]
         
-        return (user not in ['edu', 'education', 'subscription_center', 'feed', 'editor', 'watch', 'playlist'])
+        return (user not in self.nonChannels)
     
     def findChannel(self, url):
         base = 'youtube.com/'
@@ -129,69 +183,7 @@ class YouTubeLinked():
             else:
                 return url[start:]
         
-    def getLinkedResources(self, item):
-        desc = item("Plot")
-        channels = []
-        playlists = []
-        videos = []
-        
-        if not desc or 'media:thumbnail' in desc:
-            return False
-        
-        mgroups = self.GRUBER_URLINTEXT_PAT.findall(desc)
-        urls = [mgroup[0] for mgroup in mgroups]
-        for url in urls:
-            #######################################################################################
-            #
-            # This currently only looks for stuff under the domains "youtube.com" and "youtu.be"
-            # May need to be updated for international
-            #
-            ####################################################################################### 
-            if 'youtube.com/' in url.lower() or 'youtu.be/' in url.lower():
-                if self.hasPlaylist(url):
-                    playlists.append(self.findPlaylist(url))
-                elif self.hasVideo(url):
-                    videos.append(self.findVideo(url))
-                elif self.hasChannel(url):
-                    channels.append(self.findChannel(url))
-
-        url = ''
-        q = {}
-        if channels:
-            q['linked_channels'] = json.dumps(self.uniquify(channels))
-        if playlists:
-            q['linked_playlists'] = json.dumps(self.uniquify(playlists))
-        if videos:
-            q['linked_videos'] = json.dumps(self.uniquify(videos))
-        
-        return q
-    
-    def unescape(self, s):
-        s = s.replace("&lt;", "<")
-        s = s.replace("&gt;", ">")
-        s = s.replace("&apos;", "'")
-        s = s.replace("&quot;", '"')
-        s = s.replace("&amp;", "&")
-        return s
-
-    def uniquify(self, seq):
-        seen = set()
-        return [x for x in seq if x not in seen and not seen.add(x)]
-    
-    def list(self, params):
-        self.common.log("params: " + repr(params), 5)
-        print "params: " + repr(params)
-        get = params.get
-        
-        if get("linked") == 'videos':
-            return self.listVideos(params)
-        
-        if get("linked") == 'channels':
-            return self.listChannels(params)
-
-        if get("linked") == 'playlists':
-            return self.listPlaylists(params)
-    
+    #----------------------------------List Resources----------------------------------#
     def listChannels(self, params):
         self.common.log("params: " + repr(params), 5)
         get = params.get
@@ -238,14 +230,17 @@ class YouTubeLinked():
         for node in entries:
             channel ={}
             
-            self.common.log(node, 5)
-            channel['Title'] = self.unescape(self.common.parseDOM(node, "title")[0])
-            thumbnails = self.common.parseDOM(node, "media:thumbnail", ret="url")
-            if thumbnails:
-                channel['thumbnail'] = thumbnails[0]
-            channel['channel'] = self.common.parseDOM(node, "yt:username")[0]
-            channel['feed'] = 'uploads'
-            ytobjects.append(channel)
+            try:
+                self.common.log(node, 5)
+                channel['Title'] = self.unescape(self.common.parseDOM(node, "title")[0])
+                thumbnails = self.common.parseDOM(node, "media:thumbnail", ret="url")
+                if thumbnails:
+                    channel['thumbnail'] = thumbnails[0]
+                channel['channel'] = self.common.parseDOM(node, "yt:username")[0]
+                channel['feed'] = 'uploads'
+                ytobjects.append(channel)
+            except:
+                continue
 
         return ytobjects
 
@@ -255,17 +250,20 @@ class YouTubeLinked():
         ytobjects = []
         for node in entries:
             playlist ={}
-
-            playlist['Title'] = self.unescape(self.common.parseDOM(node, "title")[0])
-            thumbnails = self.common.parseDOM(node, "media:thumbnail", attrs={'yt:name':'hqdefault'}, ret="url")
-            if thumbnails:
-                playlist['thumbnail'] = thumbnails[0]
-            else:
-                playlist['thumbnail'] = self.common.parseDOM(node, "media:thumbnail", ret="url") 
-            playlist['playlist'] = self.common.parseDOM(node, "yt:playlistId")[0] 
-            playlist['author'] = self.unescape(self.common.parseDOM(node, "name")[0]) 
-            playlist['feed'] = 'playlist'
-            ytobjects.append(playlist)
+            
+            try:
+                playlist['Title'] = self.unescape(self.common.parseDOM(node, "title")[0])
+                thumbnails = self.common.parseDOM(node, "media:thumbnail", attrs={'yt:name':'hqdefault'}, ret="url")
+                if thumbnails:
+                    playlist['thumbnail'] = thumbnails[0]
+                else:
+                    playlist['thumbnail'] = self.common.parseDOM(node, "media:thumbnail", ret="url") 
+                playlist['playlist'] = self.common.parseDOM(node, "yt:playlistId")[0] 
+                playlist['author'] = self.unescape(self.common.parseDOM(node, "name")[0]) 
+                playlist['feed'] = 'playlist'
+                ytobjects.append(playlist)
+            except:
+                continue
 
         return ytobjects
     
@@ -337,6 +335,19 @@ class YouTubeLinked():
 
         return (ytobjects, status)
     
+    #----------------------------------Utilities----------------------------------#
+    def unescape(self, s):
+        s = s.replace("&lt;", "<")
+        s = s.replace("&gt;", ">")
+        s = s.replace("&apos;", "'")
+        s = s.replace("&quot;", '"')
+        s = s.replace("&amp;", "&")
+        return s
+
+    def uniquify(self, seq):
+        seen = set()
+        return [x for x in seq if x not in seen and not seen.add(x)]
+    
     def getEntries(self, xml):
         entries = self.common.parseDOM(xml, "entry")
         if not entries:
@@ -344,5 +355,3 @@ class YouTubeLinked():
 
         return entries
 
-    
-            
